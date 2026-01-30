@@ -44,10 +44,15 @@ export default function Dashboard() {
 
   useEffect(() => {
     let interval;
-    if (activePhase === 2 && result && isSimulating) {
-        interval = setInterval(() => checkStormShield(true), 1500); 
-    } else if (activePhase === 2 && result && !isSimulating) {
-        checkStormShield(false);
+    if (activePhase === 2 && result) {
+        // Fetch initial weather data when phase 2 loads
+        checkStormShield(isSimulating);
+        // Then set up interval for live/test mode
+        if (isSimulating) {
+            interval = setInterval(() => checkStormShield(true), 1500); 
+        } else {
+            interval = setInterval(() => checkStormShield(false), 3000);
+        }
     }
     return () => clearInterval(interval);
   }, [activePhase, isSimulating, result]);
@@ -99,7 +104,8 @@ export default function Dashboard() {
   const checkStormShield = async (simulate) => {
     try {
         if (!result || !result.terrain_breakdown) return;
-        const res = await axios.get(`http://127.0.0.1:8000/weather-resilience/${selectedVillage.id}/${result.terrain_breakdown.tech}?simulate=${simulate}`);
+        const techType = encodeURIComponent(result.terrain_breakdown.tech);
+        const res = await axios.get(`http://127.0.0.1:8000/weather-resilience/${selectedVillage.id}/${techType}?simulate=${simulate}`);
         setWeatherData(res.data);
         const newLog = `[${res.data.timestamp}] SIGNAL: ${res.data.resilience_score}% | PKT_LOSS: ${100-res.data.resilience_score}%`;
         setLogs(prev => [newLog, ...prev].slice(0, 4));
@@ -130,7 +136,7 @@ export default function Dashboard() {
          </div>
       </nav>
 
-      <div style={{ width: '100%', height: '100%', position: 'relative' }}>
+      <div style={{ width: '100%', height: '100%', position: 'relative', overflow: 'hidden' }}>
         <MapContainer center={[selectedVillage.lat, selectedVillage.lng]} zoom={15} style={{ width: '100%', height: '100%' }} zoomControl={false}>
           <TileLayer url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}" attribution='&copy; Esri' />
           <MapController village={selectedVillage} />
@@ -164,6 +170,93 @@ export default function Dashboard() {
              </React.Fragment>
           ))}
         </MapContainer>
+
+        {/* --- REAL-TIME STATUS WIDGET (Bottom Left) --- */}
+        {result && weatherData && (
+            <div style={{ position: 'absolute', bottom: '24px', left: '24px', width: '350px', zIndex: 1000, background: weatherData?.is_sos_triggered ? 'rgba(69, 10, 10, 0.95)' : 'rgba(9, 30, 50, 0.95)', backdropFilter: 'blur(16px)', borderRadius: '16px', border: weatherData?.is_sos_triggered ? '1px solid #ef4444' : '1px solid rgba(59, 130, 246, 0.3)', padding: '20px', display: 'flex', flexDirection: 'column', gap: '14px', boxShadow: weatherData?.is_sos_triggered ? '0 0 25px rgba(239, 68, 68, 0.3)' : '0 0 15px rgba(59, 130, 246, 0.2)' }}>
+              
+              {/* Header */}
+              <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '10px'}}>
+                <div style={{display:'flex', alignItems:'center', gap:'8px', color: weatherData?.is_sos_triggered ? '#ef4444' : '#60a5fa', fontWeight:'bold'}}>
+                  <ShieldAlert size={18}/>
+                  NETWORK STATUS
+                </div>
+                <div style={{fontSize:'12px', color: '#a1a1aa'}}>LIVE</div>
+              </div>
+
+              {/* Weather Condition Card */}
+              <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px'}}>
+                <div style={{background:'rgba(255,255,255,0.05)', padding:'12px', borderRadius:'8px', border:'1px solid rgba(255,255,255,0.1)'}}>
+                  <div style={{fontSize:'9px', color:'#a1a1aa', fontWeight:'bold', marginBottom:'4px'}}>WEATHER</div>
+                  <div style={{fontSize:'13px', fontWeight:'bold', color:'white'}}>{weatherData.condition}</div>
+                </div>
+                <div style={{background:'rgba(255,255,255,0.05)', padding:'12px', borderRadius:'8px', border:'1px solid rgba(255,255,255,0.1)'}}>
+                  <div style={{fontSize:'9px', color:'#a1a1aa', fontWeight:'bold', marginBottom:'4px'}}>SEVERITY</div>
+                  <div style={{fontSize:'13px', fontWeight:'bold', color: weatherData.severity_score > 70 ? '#ef4444' : weatherData.severity_score > 40 ? '#f59e0b' : '#10b981'}}>{weatherData.severity_score}%</div>
+                </div>
+              </div>
+
+              {/* Network Policy */}
+              <div style={{background:'rgba(0,0,0,0.3)', padding:'12px', borderRadius:'8px', border:'1px solid rgba(255,255,255,0.1)'}}>
+                <div style={{fontSize:'9px', fontWeight:'bold', color:'#a1a1aa', marginBottom:'8px', textTransform:'uppercase'}}>🔌 BANDWIDTH</div>
+                <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'8px'}}>
+                  <span style={{fontSize:'11px', fontWeight:'bold', padding:'4px 10px', borderRadius:'4px', background: weatherData.is_sos_triggered ? '#ef4444' : weatherData.severity_score > 70 ? '#d97706' : weatherData.severity_score > 40 ? '#f59e0b' : '#059669', color:'white'}}>{weatherData.network_policy.status}</span>
+                  <span style={{fontSize:'12px', fontWeight:'bold', color: weatherData.severity_score > 70 ? '#ef4444' : '#60a5fa'}}>{weatherData.network_policy.bandwidth_cap}% CAP</span>
+                </div>
+                <div style={{height:'4px', background:'rgba(255,255,255,0.1)', borderRadius:'2px', overflow:'hidden'}}>
+                  <div style={{height:'100%', width:`${weatherData.network_policy.bandwidth_cap}%`, background: weatherData.is_sos_triggered ? '#ef4444' : weatherData.severity_score > 70 ? '#d97706' : '#60a5fa', transition:'all 0.3s ease'}}></div>
+                </div>
+              </div>
+
+              {/* Allowed Apps */}
+              <div style={{background:'rgba(16, 185, 129, 0.1)', padding:'10px', borderRadius:'8px', border:'1px solid rgba(16, 185, 129, 0.3)'}}>
+                <div style={{fontSize:'9px', fontWeight:'bold', color:'#34d399', marginBottom:'6px'}}>✅ ALLOWED</div>
+                <div style={{display:'flex', flexWrap:'wrap', gap:'6px'}}>
+                  {weatherData.network_policy.allowed_apps.slice(0, 4).map(app => (
+                    <span key={app} style={{fontSize:'10px', padding:'3px 8px', background:'rgba(16, 185, 129, 0.2)', color:'#6ee7b7', borderRadius:'4px', border:'1px solid rgba(16, 185, 129, 0.4)'}}>{app}</span>
+                  ))}
+                  {weatherData.network_policy.allowed_apps.length > 4 && <span style={{fontSize:'10px', padding:'3px 8px', color:'#6ee7b7'}}>+{weatherData.network_policy.allowed_apps.length - 4}</span>}
+                </div>
+              </div>
+
+              {/* Blocked Apps */}
+              {weatherData.network_policy.blocked_apps.length > 0 && (
+                <div style={{background:'rgba(239, 68, 68, 0.1)', padding:'10px', borderRadius:'8px', border:'1px solid rgba(239, 68, 68, 0.3)'}}>
+                  <div style={{fontSize:'9px', fontWeight:'bold', color:'#f87171', marginBottom:'6px'}}>❌ BLOCKED</div>
+                  <div style={{display:'flex', flexWrap:'wrap', gap:'6px'}}>
+                    {weatherData.network_policy.blocked_apps.slice(0, 4).map(app => (
+                      <span key={app} style={{fontSize:'10px', padding:'3px 8px', background:'rgba(239, 68, 68, 0.2)', color:'#fca5a5', borderRadius:'4px', border:'1px solid rgba(239, 68, 68, 0.4)'}}>{app}</span>
+                    ))}
+                    {weatherData.network_policy.blocked_apps.length > 4 && <span style={{fontSize:'10px', padding:'3px 8px', color:'#fca5a5'}}>+{weatherData.network_policy.blocked_apps.length - 4}</span>}
+                  </div>
+                </div>
+              )}
+
+              {/* Signal Quality */}
+              <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px'}}>
+                <div style={{background:'rgba(255,255,255,0.05)', padding:'10px', borderRadius:'8px', border:'1px solid rgba(255,255,255,0.1)', textAlign:'center'}}>
+                  <div style={{fontSize:'9px', color:'#a1a1aa', marginBottom:'4px'}}>SIGNAL</div>
+                  <div style={{fontSize:'16px', fontWeight:'bold', color: weatherData.resilience_score > 80 ? '#10b981' : weatherData.resilience_score > 50 ? '#f59e0b' : '#ef4444'}}>{weatherData.resilience_score}%</div>
+                </div>
+                <div style={{background:'rgba(255,255,255,0.05)', padding:'10px', borderRadius:'8px', border:'1px solid rgba(255,255,255,0.1)', textAlign:'center'}}>
+                  <div style={{fontSize:'9px', color:'#a1a1aa', marginBottom:'4px'}}>PKT LOSS</div>
+                  <div style={{fontSize:'16px', fontWeight:'bold', color: weatherData.resilience_score > 80 ? '#10b981' : weatherData.resilience_score > 50 ? '#f59e0b' : '#ef4444'}}>{100 - weatherData.resilience_score}%</div>
+                </div>
+              </div>
+
+              {/* Alert */}
+              {weatherData.is_sos_triggered && (
+                <div style={{padding:'12px', background:'rgba(239, 68, 68, 0.2)', border:'1px solid #ef4444', borderRadius:'8px', color:'#fca5a5', fontSize:'11px', fontWeight:'600', textAlign:'center', animation: 'pulse 2s infinite'}}>
+                  {weatherData.alert_message}
+                </div>
+              )}
+
+              {/* Last Update */}
+              <div style={{fontSize:'9px', color:'#71717a', textAlign:'center', paddingTop:'8px', borderTop:'1px solid rgba(255,255,255,0.1)'}}>
+                Last update: {weatherData.timestamp}
+              </div>
+            </div>
+        )}
 
         {/* --- PHASE 1 PANEL --- */}
         {activePhase === 1 && (
